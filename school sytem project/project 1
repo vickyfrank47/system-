@@ -1,0 +1,2070 @@
+<!doctype html>
+<html lang="en" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Student Portal System</title>
+  <script src="/_sdk/data_sdk.js"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      box-sizing: border-box;
+    }
+    
+    .toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 16px 24px;
+      border-radius: 8px;
+      color: white;
+      font-weight: 500;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      z-index: 1000;
+      animation: slideIn 0.3s ease-out;
+    }
+    
+    .toast.success {
+      background-color: #10b981;
+    }
+    
+    .toast.error {
+      background-color: #ef4444;
+    }
+    
+    @keyframes slideIn {
+      from {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    
+    .loading-spinner {
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .card-hover {
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .card-hover:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+    }
+  </style>
+  <style>@view-transition { navigation: auto; }</style>
+ </head>
+ <body class="h-full">
+  <div id="app" class="h-full w-full overflow-auto"></div>
+  <script>
+    const defaultConfig = {
+      portal_title: "Student Portal System",
+      institution_name: "Migori University",
+      welcome_message: "Welcome to the Student Portal",
+      primary_color: "#2563eb",
+      secondary_color: "#f3f4f6",
+      text_color: "#1f2937",
+      header_bg: "#1e40af",
+      accent_color: "#10b981",
+      font_family: "Inter",
+      font_size: 16
+    };
+
+    let currentStudents = [];
+    let currentView = 'login-choice'; // login-choice, student-login, admin-dashboard, student-dashboard, students, add, edit, detail
+    let selectedStudent = null;
+    let editingStudent = null;
+    let loggedInStudent = null;
+    let isAdminMode = false;
+
+    const dataHandler = {
+      onDataChanged(data) {
+        currentStudents = data;
+        renderApp();
+      }
+    };
+
+    function showToast(message, type = 'success') {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      
+      setTimeout(() => {
+        toast.remove();
+      }, 3000);
+    }
+
+    function calculateOutstanding(student) {
+      return student.total_fees - student.fees_paid;
+    }
+
+    function getPaymentStatusColor(status) {
+      const statusColors = {
+        'Paid': '#10b981',
+        'Partial': '#f59e0b',
+        'Pending': '#ef4444'
+      };
+      return statusColors[status] || '#6b7280';
+    }
+
+    function calculateGPA(examRecords) {
+      if (!examRecords || examRecords.length === 0) return 0;
+      
+      const gradePoints = {
+        'A+': 4.0, 'A': 4.0, 'A-': 3.7,
+        'B+': 3.3, 'B': 3.0, 'B-': 2.7,
+        'C+': 2.3, 'C': 2.0, 'C-': 1.7,
+        'D+': 1.3, 'D': 1.0, 'F': 0.0
+      };
+      
+      let totalPoints = 0;
+      examRecords.forEach(record => {
+        totalPoints += (gradePoints[record.grade] || 0);
+      });
+      
+      return (totalPoints / examRecords.length).toFixed(2);
+    }
+
+    function logout() {
+      loggedInStudent = null;
+      isAdminMode = false;
+      currentView = 'login-choice';
+      renderApp();
+    }
+
+    function studentLogin(fullName, admissionNumber) {
+      const student = currentStudents.find(s => 
+        s.full_name.toLowerCase() === fullName.toLowerCase() && 
+        s.student_id === admissionNumber
+      );
+      
+      if (student) {
+        loggedInStudent = student;
+        isAdminMode = false;
+        currentView = 'student-dashboard';
+        showToast(`Welcome back, ${student.full_name}!`);
+        renderApp();
+      } else {
+        showToast('Invalid username or password. Please check and try again.', 'error');
+      }
+    }
+
+    function showForgotPasswordMessage() {
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      const messageDiv = document.createElement('div');
+      messageDiv.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 32px;
+        border-radius: 16px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        z-index: 1000;
+        max-width: 450px;
+        width: 90%;
+        text-align: center;
+        font-family: ${customFont}, ${baseFontStack};
+      `;
+
+      messageDiv.innerHTML = `
+        <div style="font-size: ${fontSize * 3}px; margin-bottom: 16px;">🔒</div>
+        <h3 style="font-size: ${fontSize * 1.5}px; font-weight: 700; margin: 0 0 16px 0; color: ${config.text_color || defaultConfig.text_color};">
+          Forgot Your Password?
+        </h3>
+        <p style="font-size: ${fontSize}px; color: #6b7280; margin: 0 0 24px 0; line-height: 1.6;">
+          Please visit the <strong>ICT Department</strong> to reset your admission number password. 
+          Bring your student ID for verification.
+        </p>
+        <button 
+          id="close-forgot-btn"
+          style="background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 12px 32px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; width: 100%;"
+          onmouseover="this.style.opacity='0.9'"
+          onmouseout="this.style.opacity='1'">
+          Got it
+        </button>
+      `;
+
+      const backdrop = document.createElement('div');
+      backdrop.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        z-index: 999;
+      `;
+
+      document.body.appendChild(backdrop);
+      document.body.appendChild(messageDiv);
+
+      const closeBtn = document.getElementById('close-forgot-btn');
+      closeBtn.addEventListener('click', () => {
+        backdrop.remove();
+        messageDiv.remove();
+      });
+
+      backdrop.addEventListener('click', () => {
+        backdrop.remove();
+        messageDiv.remove();
+      });
+    }
+
+    function showPaymentModal(category, suggestedAmount) {
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      const modalDiv = document.createElement('div');
+      modalDiv.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 32px;
+        border-radius: 16px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        z-index: 1000;
+        max-width: 500px;
+        width: 90%;
+        font-family: ${customFont}, ${baseFontStack};
+        max-height: 90%;
+        overflow-y: auto;
+      `;
+
+      const categoryIcons = {
+        'Tuition Fees': '🎓',
+        'Accommodation': '🏠',
+        'Exam Fees': '📝'
+      };
+
+      modalDiv.innerHTML = `
+        <div style="text-align: center; margin-bottom: 24px;">
+          <div style="font-size: ${fontSize * 3}px; margin-bottom: 12px;">${categoryIcons[category]}</div>
+          <h3 style="font-size: ${fontSize * 1.5}px; font-weight: 700; margin: 0 0 8px 0; color: ${config.text_color || defaultConfig.text_color};">
+            ${category} Payment
+          </h3>
+          <p style="font-size: ${fontSize * 0.9}px; color: #6b7280; margin: 0;">
+            Complete the form below to make your payment
+          </p>
+        </div>
+
+        <form id="student-payment-form">
+          <div style="margin-bottom: 20px;">
+            <label for="modal_payment_amount" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">
+              Payment Amount ($)
+            </label>
+            <input 
+              type="number" 
+              id="modal_payment_amount" 
+              value="${suggestedAmount || ''}"
+              required
+              min="0.01"
+              step="0.01"
+              placeholder="Enter amount"
+              style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+            />
+          </div>
+
+          <div style="margin-bottom: 24px;">
+            <label for="modal_payment_method" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">
+              Payment Method
+            </label>
+            <select 
+              id="modal_payment_method" 
+              required
+              style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit; background: white;"
+            >
+              <option value="">Select Method</option>
+              <option value="Cash">Cash</option>
+              <option value="Credit Card">Credit Card</option>
+              <option value="Debit Card">Debit Card</option>
+              <option value="Bank Transfer">Bank Transfer</option>
+              <option value="Mobile Money">Mobile Money</option>
+              <option value="Cheque">Cheque</option>
+              <option value="Online Payment">Online Payment</option>
+            </select>
+          </div>
+
+          <div style="padding: 16px; background: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b; margin-bottom: 24px;">
+            <p style="font-size: ${fontSize * 0.85}px; color: #92400e; margin: 0; line-height: 1.5;">
+              <strong>Note:</strong> This is a demonstration payment interface. In a real system, payments would be processed through secure payment gateways. Contact administration for actual payment processing.
+            </p>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <button 
+              type="submit"
+              id="submit-payment-btn"
+              style="background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 12px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+              onmouseover="this.style.opacity='0.9'"
+              onmouseout="this.style.opacity='1'">
+              Submit Payment
+            </button>
+            <button 
+              type="button"
+              id="cancel-payment-btn"
+              style="background: #6b7280; color: white; padding: 12px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+              onmouseover="this.style.opacity='0.9'"
+              onmouseout="this.style.opacity='1'">
+              Cancel
+            </button>
+          </div>
+        </form>
+      `;
+
+      const backdrop = document.createElement('div');
+      backdrop.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        z-index: 999;
+      `;
+
+      document.body.appendChild(backdrop);
+      document.body.appendChild(modalDiv);
+
+      const paymentForm = document.getElementById('student-payment-form');
+      paymentForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const amount = parseFloat(document.getElementById('modal_payment_amount').value);
+        const method = document.getElementById('modal_payment_method').value;
+        
+        const submitBtn = document.getElementById('submit-payment-btn');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<div class="loading-spinner mx-auto"></div>';
+
+        // For tuition fees, update the student record
+        if (category === 'Tuition Fees' && loggedInStudent) {
+          const newFeesPaid = loggedInStudent.fees_paid + amount;
+          const outstanding = loggedInStudent.total_fees - newFeesPaid;
+          let paymentStatus = 'Pending';
+          
+          if (outstanding === 0) {
+            paymentStatus = 'Paid';
+          } else if (newFeesPaid > 0) {
+            paymentStatus = 'Partial';
+          }
+
+          let paymentHistory = [];
+          try {
+            paymentHistory = JSON.parse(loggedInStudent.payment_history || '[]');
+          } catch (e) {
+            paymentHistory = [];
+          }
+
+          paymentHistory.push({
+            date: new Date().toISOString(),
+            amount: amount,
+            method: method,
+            balance_after: newFeesPaid,
+            category: category
+          });
+
+          const result = await window.dataSdk.update({
+            ...loggedInStudent,
+            fees_paid: newFeesPaid,
+            payment_status: paymentStatus,
+            last_payment_date: new Date().toISOString(),
+            last_payment_amount: amount,
+            last_payment_method: method,
+            payment_history: JSON.stringify(paymentHistory)
+          });
+
+          if (result.isOk) {
+            showToast(`${category} payment of $${amount.toLocaleString()} recorded successfully!`);
+          } else {
+            showToast('Payment failed. Please try again.', 'error');
+          }
+        } else {
+          // For other categories (demo only)
+          showToast(`${category} payment request submitted. Please contact administration to complete this payment.`);
+        }
+
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit Payment';
+        backdrop.remove();
+        modalDiv.remove();
+      });
+
+      document.getElementById('cancel-payment-btn').addEventListener('click', () => {
+        backdrop.remove();
+        modalDiv.remove();
+      });
+
+      backdrop.addEventListener('click', () => {
+        backdrop.remove();
+        modalDiv.remove();
+      });
+    }
+
+    async function addStudent(studentData) {
+      if (currentStudents.length >= 999) {
+        showToast('Maximum limit of 999 students reached. Please delete some records first.', 'error');
+        return;
+      }
+
+      const button = document.querySelector('#add-student-btn');
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = '<div class="loading-spinner mx-auto"></div>';
+      }
+
+      const result = await window.dataSdk.create({
+        student_id: studentData.student_id,
+        full_name: studentData.full_name,
+        email: studentData.email,
+        phone: studentData.phone,
+        course: studentData.course,
+        year_of_study: studentData.year_of_study,
+        enrollment_date: new Date().toISOString(),
+        total_fees: studentData.total_fees,
+        fees_paid: 0,
+        payment_status: 'Pending',
+        last_payment_date: '',
+        last_payment_amount: 0,
+        last_payment_method: '',
+        payment_history: JSON.stringify([]),
+        exam_records: JSON.stringify([])
+      });
+
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Add Student';
+      }
+
+      if (result.isOk) {
+        showToast('Student added successfully!');
+        currentView = 'admin-dashboard';
+      } else {
+        showToast('Failed to add student. Please try again.', 'error');
+      }
+    }
+
+    async function updateStudent(student, updates) {
+      const button = document.querySelector('#update-student-btn');
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = '<div class="loading-spinner mx-auto"></div>';
+      }
+
+      const result = await window.dataSdk.update({
+        ...student,
+        ...updates
+      });
+
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Update Student';
+      }
+
+      if (result.isOk) {
+        showToast('Student updated successfully!');
+        editingStudent = null;
+        currentView = 'students';
+      } else {
+        showToast('Failed to update student. Please try again.', 'error');
+      }
+    }
+
+    async function recordPayment(student, amount, method) {
+      const button = document.querySelector('#record-payment-btn');
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = '<div class="loading-spinner mx-auto"></div>';
+      }
+
+      const newFeesPaid = student.fees_paid + amount;
+      const outstanding = student.total_fees - newFeesPaid;
+      let paymentStatus = 'Pending';
+      
+      if (outstanding === 0) {
+        paymentStatus = 'Paid';
+      } else if (newFeesPaid > 0) {
+        paymentStatus = 'Partial';
+      }
+
+      let paymentHistory = [];
+      try {
+        paymentHistory = JSON.parse(student.payment_history || '[]');
+      } catch (e) {
+        paymentHistory = [];
+      }
+
+      paymentHistory.push({
+        date: new Date().toISOString(),
+        amount: amount,
+        method: method,
+        balance_after: newFeesPaid
+      });
+
+      const result = await window.dataSdk.update({
+        ...student,
+        fees_paid: newFeesPaid,
+        payment_status: paymentStatus,
+        last_payment_date: new Date().toISOString(),
+        last_payment_amount: amount,
+        last_payment_method: method,
+        payment_history: JSON.stringify(paymentHistory)
+      });
+
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Record Payment';
+      }
+
+      if (result.isOk) {
+        showToast('Payment recorded successfully!');
+        selectedStudent = null;
+      } else {
+        showToast('Failed to record payment. Please try again.', 'error');
+      }
+    }
+
+    async function addExamRecord(student, examData) {
+      const button = document.querySelector('#add-exam-btn');
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = '<div class="loading-spinner mx-auto"></div>';
+      }
+
+      let examRecords = [];
+      try {
+        examRecords = JSON.parse(student.exam_records || '[]');
+      } catch (e) {
+        examRecords = [];
+      }
+
+      examRecords.push({
+        id: Date.now().toString(),
+        date: new Date().toISOString(),
+        ...examData
+      });
+
+      const result = await window.dataSdk.update({
+        ...student,
+        exam_records: JSON.stringify(examRecords)
+      });
+
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Add Exam Record';
+      }
+
+      if (result.isOk) {
+        showToast('Exam record added successfully!');
+        // Clear form
+        document.getElementById('add-exam-form').reset();
+      } else {
+        showToast('Failed to add exam record. Please try again.', 'error');
+      }
+    }
+
+    async function deleteStudent(student) {
+      const result = await window.dataSdk.delete(student);
+
+      if (result.isOk) {
+        showToast('Student deleted successfully!');
+        selectedStudent = null;
+        currentView = 'students';
+      } else {
+        showToast('Failed to delete student. Please try again.', 'error');
+      }
+    }
+
+    function renderLoginChoice() {
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      return `
+        <div style="min-height: 100%; background: linear-gradient(135deg, ${config.primary_color || defaultConfig.primary_color} 0%, ${config.header_bg || defaultConfig.header_bg} 100%); display: flex; align-items: center; justify-content: center; padding: 32px; font-family: ${customFont}, ${baseFontStack};">
+          <div style="max-width: 900px; width: 100%;">
+            <div style="text-align: center; margin-bottom: 48px;">
+              <h1 style="font-size: ${fontSize * 3}px; font-weight: 800; color: white; margin: 0 0 16px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                ${config.portal_title || defaultConfig.portal_title}
+              </h1>
+              <p style="font-size: ${fontSize * 1.25}px; color: rgba(255,255,255,0.95); margin: 0;">
+                ${config.institution_name || defaultConfig.institution_name}
+              </p>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 32px;">
+              <div class="card-hover" style="background: white; padding: 40px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; cursor: pointer;" onclick="currentView = 'student-login'; renderApp();">
+                <div style="font-size: ${fontSize * 4}px; margin-bottom: 24px;">👨‍🎓</div>
+                <h2 style="font-size: ${fontSize * 1.75}px; font-weight: 700; color: ${config.text_color || defaultConfig.text_color}; margin: 0 0 12px 0;">
+                  Student Login
+                </h2>
+                <p style="font-size: ${fontSize}px; color: #6b7280; margin: 0 0 24px 0;">
+                  Access your personal dashboard, view grades, and track fee payments
+                </p>
+                <button 
+                  style="background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 12px 32px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; width: 100%;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Login as Student
+                </button>
+              </div>
+
+              <div class="card-hover" style="background: white; padding: 40px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; cursor: pointer;" onclick="isAdminMode = true; currentView = 'admin-dashboard'; renderApp();">
+                <div style="font-size: ${fontSize * 4}px; margin-bottom: 24px;">👨‍💼</div>
+                <h2 style="font-size: ${fontSize * 1.75}px; font-weight: 700; color: ${config.text_color || defaultConfig.text_color}; margin: 0 0 12px 0;">
+                  Admin Access
+                </h2>
+                <p style="font-size: ${fontSize}px; color: #6b7280; margin: 0 0 24px 0;">
+                  Manage student records, track payments, and access analytics
+                </p>
+                <button 
+                  style="background: ${config.header_bg || defaultConfig.header_bg}; color: white; padding: 12px 32px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; width: 100%;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Admin Dashboard
+                </button>
+              </div>
+            </div>
+
+            <div style="text-align: center; margin-top: 48px;">
+              <p style="font-size: ${fontSize * 0.9}px; color: rgba(255,255,255,0.8);">
+                ${config.welcome_message || defaultConfig.welcome_message}
+              </p>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStudentLogin() {
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      return `
+        <div style="min-height: 100%; background: linear-gradient(135deg, ${config.primary_color || defaultConfig.primary_color} 0%, ${config.header_bg || defaultConfig.header_bg} 100%); display: flex; align-items: center; justify-content: center; padding: 32px; font-family: ${customFont}, ${baseFontStack};">
+          <div style="max-width: 450px; width: 100%;">
+            <div style="text-align: center; margin-bottom: 32px;">
+              <h1 style="font-size: ${fontSize * 2.5}px; font-weight: 800; color: white; margin: 0 0 12px 0;">
+                Student Login
+              </h1>
+              <p style="font-size: ${fontSize}px; color: rgba(255,255,255,0.9); margin: 0;">
+                Use your full name and admission number
+              </p>
+            </div>
+
+            <div style="background: white; padding: 40px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+              <form id="student-login-form">
+                <div style="margin-bottom: 24px;">
+                  <label for="login_student_name" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">
+                    Full Name (Username)
+                  </label>
+                  <input 
+                    type="text" 
+                    id="login_student_name" 
+                    required
+                    placeholder="Enter your full name"
+                    style="width: 100%; padding: 14px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+
+                <div style="margin-bottom: 24px;">
+                  <label for="login_admission_number" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">
+                    Admission Number (Password)
+                  </label>
+                  <input 
+                    type="password" 
+                    id="login_admission_number" 
+                    required
+                    placeholder="Enter your admission number"
+                    style="width: 100%; padding: 14px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+
+                <button 
+                  type="submit"
+                  id="login-btn"
+                  style="width: 100%; background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; margin-bottom: 16px;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Login
+                </button>
+
+                <button 
+                  type="button"
+                  onclick="currentView = 'login-choice'; renderApp();"
+                  style="width: 100%; background: transparent; color: ${config.primary_color || defaultConfig.primary_color}; padding: 14px; border: 2px solid ${config.primary_color || defaultConfig.primary_color}; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; margin-bottom: 16px;"
+                  onmouseover="this.style.background='${config.primary_color || defaultConfig.primary_color}'; this.style.color='white';"
+                  onmouseout="this.style.background='transparent'; this.style.color='${config.primary_color || defaultConfig.primary_color}';">
+                  Back
+                </button>
+
+                <div style="text-align: center;">
+                  <button 
+                    type="button"
+                    id="forgot-password-btn"
+                    style="background: none; border: none; color: #6b7280; font-size: ${fontSize * 0.9}px; cursor: pointer; text-decoration: underline;"
+                    onmouseover="this.style.color='${config.primary_color || defaultConfig.primary_color}'"
+                    onmouseout="this.style.color='#6b7280'">
+                    Forgot Password?
+                  </button>
+                </div>
+              </form>
+
+              ${currentStudents.length === 0 ? `
+                <div style="margin-top: 24px; padding: 16px; background: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                  <p style="font-size: ${fontSize * 0.9}px; color: #92400e; margin: 0;">
+                    <strong>Note:</strong> No students registered yet. Please contact administration.
+                  </p>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStudentDashboard() {
+      if (!loggedInStudent) {
+        currentView = 'student-login';
+        renderApp();
+        return '';
+      }
+
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+      const outstanding = calculateOutstanding(loggedInStudent);
+      const progressPercentage = loggedInStudent.total_fees > 0 ? Math.round((loggedInStudent.fees_paid / loggedInStudent.total_fees) * 100) : 0;
+
+      let examRecords = [];
+      try {
+        examRecords = JSON.parse(loggedInStudent.exam_records || '[]');
+      } catch (e) {
+        examRecords = [];
+      }
+
+      const gpa = calculateGPA(examRecords);
+
+      return `
+        <div style="background: ${config.secondary_color || defaultConfig.secondary_color}; color: ${config.text_color || defaultConfig.text_color}; font-family: ${customFont}, ${baseFontStack}; min-height: 100%;">
+          <div style="background: ${config.header_bg || defaultConfig.header_bg}; padding: 24px 32px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h1 style="font-size: ${fontSize * 2}px; font-weight: 700; color: white; margin: 0;">
+                Welcome, ${loggedInStudent.full_name}
+              </h1>
+              <p style="font-size: ${fontSize * 0.9}px; color: rgba(255,255,255,0.9); margin-top: 4px;">
+                Student ID: ${loggedInStudent.student_id}
+              </p>
+            </div>
+            <button 
+              onclick="logout();"
+              style="background: rgba(255,255,255,0.2); color: white; padding: 10px 24px; border: 2px solid white; border-radius: 8px; font-size: ${fontSize * 0.9}px; font-weight: 600; cursor: pointer;"
+              onmouseover="this.style.background='rgba(255,255,255,0.3)'"
+              onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+              Logout
+            </button>
+          </div>
+
+          <div style="padding: 32px; max-width: 1200px; margin: 0 auto;">
+            <!-- Quick Stats -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 24px; margin-bottom: 32px;">
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid ${config.primary_color || defaultConfig.primary_color};">
+                <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Course</div>
+                <div style="font-size: ${fontSize * 1.5}px; font-weight: 700; color: ${config.primary_color || defaultConfig.primary_color};">${loggedInStudent.course}</div>
+              </div>
+              
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid #8b5cf6;">
+                <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Year of Study</div>
+                <div style="font-size: ${fontSize * 1.5}px; font-weight: 700; color: #8b5cf6;">${loggedInStudent.year_of_study}</div>
+              </div>
+              
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid ${getPaymentStatusColor(loggedInStudent.payment_status)};">
+                <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Payment Status</div>
+                <div style="font-size: ${fontSize * 1.5}px; font-weight: 700; color: ${getPaymentStatusColor(loggedInStudent.payment_status)};">${loggedInStudent.payment_status}</div>
+              </div>
+
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid #f59e0b;">
+                <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Current GPA</div>
+                <div style="font-size: ${fontSize * 1.5}px; font-weight: 700; color: #f59e0b;">${gpa > 0 ? gpa : 'N/A'}</div>
+              </div>
+            </div>
+
+            <!-- Academic Performance Section -->
+            <div style="background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 32px;">
+              <h2 style="font-size: ${fontSize * 1.5}px; font-weight: 700; margin: 0 0 24px 0; color: ${config.text_color || defaultConfig.text_color};">
+                📊 Academic Performance
+              </h2>
+
+              ${examRecords.length > 0 ? `
+                <div style="overflow-x: auto; margin-bottom: 32px;">
+                  <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                      <tr style="background: ${config.secondary_color || defaultConfig.secondary_color}; border-bottom: 2px solid #e5e7eb;">
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Subject</th>
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Exam Type</th>
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Score</th>
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Grade</th>
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${examRecords.slice().reverse().map((record, index) => `
+                        <tr style="border-bottom: 1px solid #e5e7eb;">
+                          <td style="padding: 12px; font-size: ${fontSize * 0.9}px; font-weight: 500;">${record.subject}</td>
+                          <td style="padding: 12px; font-size: ${fontSize * 0.9}px;">${record.exam_type}</td>
+                          <td style="padding: 12px; font-size: ${fontSize * 0.9}px; font-weight: 600;">${record.score}/100</td>
+                          <td style="padding: 12px;">
+                            <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; background: ${record.grade.startsWith('A') ? '#10b98120' : record.grade.startsWith('B') ? '#3b82f620' : record.grade.startsWith('C') ? '#f59e0b20' : '#ef444420'}; color: ${record.grade.startsWith('A') ? '#10b981' : record.grade.startsWith('B') ? '#3b82f6' : record.grade.startsWith('C') ? '#f59e0b' : '#ef4444'}; font-size: ${fontSize * 0.85}px; font-weight: 600;">
+                              ${record.grade}
+                            </span>
+                          </td>
+                          <td style="padding: 12px; font-size: ${fontSize * 0.9}px; color: #6b7280;">${new Date(record.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                  <div style="padding: 16px; background: #f0fdf4; border-radius: 8px; border-left: 4px solid #10b981;">
+                    <div style="font-size: ${fontSize * 0.85}px; color: #166534; margin-bottom: 4px;">Highest Score</div>
+                    <div style="font-size: ${fontSize * 1.5}px; font-weight: 700; color: #10b981;">
+                      ${Math.max(...examRecords.map(r => r.score))}
+                    </div>
+                  </div>
+                  <div style="padding: 16px; background: #eff6ff; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                    <div style="font-size: ${fontSize * 0.85}px; color: #1e3a8a; margin-bottom: 4px;">Average Score</div>
+                    <div style="font-size: ${fontSize * 1.5}px; font-weight: 700; color: #3b82f6;">
+                      ${Math.round(examRecords.reduce((sum, r) => sum + r.score, 0) / examRecords.length)}
+                    </div>
+                  </div>
+                  <div style="padding: 16px; background: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                    <div style="font-size: ${fontSize * 0.85}px; color: #92400e; margin-bottom: 4px;">Total Exams</div>
+                    <div style="font-size: ${fontSize * 1.5}px; font-weight: 700; color: #f59e0b;">
+                      ${examRecords.length}
+                    </div>
+                  </div>
+                </div>
+              ` : `
+                <div style="text-align: center; padding: 48px 24px; background: ${config.secondary_color || defaultConfig.secondary_color}; border-radius: 8px;">
+                  <div style="font-size: ${fontSize * 3}px; margin-bottom: 16px;">📝</div>
+                  <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 8px 0; color: ${config.text_color || defaultConfig.text_color};">No Exam Records Yet</h3>
+                  <p style="font-size: ${fontSize}px; color: #6b7280; margin: 0;">Your exam results will appear here once they are added by administration</p>
+                </div>
+              `}
+            </div>
+
+            <!-- Fee Information -->
+            <div style="background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 32px;">
+              <h2 style="font-size: ${fontSize * 1.5}px; font-weight: 700; margin: 0 0 24px 0; color: ${config.text_color || defaultConfig.text_color};">
+                💰 Fee Payment Overview
+              </h2>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; margin-bottom: 32px;">
+                <div>
+                  <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 8px;">Total Fees</div>
+                  <div style="font-size: ${fontSize * 2}px; font-weight: 700; color: ${config.primary_color || defaultConfig.primary_color};">
+                    $${loggedInStudent.total_fees.toLocaleString()}
+                  </div>
+                </div>
+                
+                <div>
+                  <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 8px;">Amount Paid</div>
+                  <div style="font-size: ${fontSize * 2}px; font-weight: 700; color: ${config.accent_color || defaultConfig.accent_color};">
+                    $${loggedInStudent.fees_paid.toLocaleString()}
+                  </div>
+                </div>
+                
+                <div>
+                  <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 8px;">Outstanding Balance</div>
+                  <div style="font-size: ${fontSize * 2}px; font-weight: 700; color: ${outstanding > 0 ? '#ef4444' : '#10b981'};">
+                    $${outstanding.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Progress Bar -->
+              <div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                  <span style="font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Payment Progress</span>
+                  <span style="font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.primary_color || defaultConfig.primary_color};">${progressPercentage}%</span>
+                </div>
+                <div style="width: 100%; height: 24px; background: #e5e7eb; border-radius: 12px; overflow: hidden;">
+                  <div style="width: ${progressPercentage}%; height: 100%; background: linear-gradient(90deg, ${config.primary_color || defaultConfig.primary_color}, ${config.accent_color || defaultConfig.accent_color}); transition: width 0.5s ease;"></div>
+                </div>
+              </div>
+
+              ${loggedInStudent.last_payment_date ? `
+                <div style="margin-top: 24px; padding: 16px; background: #f0fdf4; border-radius: 8px; border-left: 4px solid ${config.accent_color || defaultConfig.accent_color};">
+                  <div style="font-size: ${fontSize * 0.85}px; color: #166534; font-weight: 600; margin-bottom: 8px;">Last Payment</div>
+                  <div style="font-size: ${fontSize}px; color: #166534;">
+                    <strong>$${loggedInStudent.last_payment_amount.toLocaleString()}</strong> on ${new Date(loggedInStudent.last_payment_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                  </div>
+                  ${loggedInStudent.last_payment_method ? `
+                    <div style="margin-top: 8px; display: inline-block; padding: 6px 14px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                      <span style="font-size: ${fontSize * 0.85}px; color: #166534;">💳 <strong>${loggedInStudent.last_payment_method}</strong></span>
+                    </div>
+                  ` : ''}
+                </div>
+              ` : `
+                <div style="margin-top: 24px; padding: 16px; background: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                  <div style="font-size: ${fontSize}px; color: #92400e;">
+                    No payments recorded yet. Please contact administration for payment options.
+                  </div>
+                </div>
+              `}
+            </div>
+
+            <!-- Make Payment Section -->
+            ${outstanding > 0 ? `
+              <div style="background: linear-gradient(135deg, ${config.primary_color || defaultConfig.primary_color}, ${config.header_bg || defaultConfig.header_bg}); padding: 32px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-bottom: 32px;">
+                <h2 style="font-size: ${fontSize * 1.5}px; font-weight: 700; margin: 0 0 16px 0; color: white;">
+                  💳 Make a Payment
+                </h2>
+                <p style="font-size: ${fontSize}px; color: rgba(255,255,255,0.95); margin: 0 0 24px 0;">
+                  Select a payment category to proceed with your payment
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                  <button 
+                    onclick="showPaymentModal('Tuition Fees', ${outstanding});"
+                    style="background: white; color: ${config.primary_color || defaultConfig.primary_color}; padding: 20px; border: none; border-radius: 10px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: flex; flex-direction: column; align-items: center; gap: 8px; transition: transform 0.2s;"
+                    onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'"
+                    onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'">
+                    <span style="font-size: ${fontSize * 2}px;">🎓</span>
+                    <span>Tuition Fees</span>
+                  </button>
+                  <button 
+                    onclick="showPaymentModal('Accommodation', 0);"
+                    style="background: white; color: ${config.primary_color || defaultConfig.primary_color}; padding: 20px; border: none; border-radius: 10px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: flex; flex-direction: column; align-items: center; gap: 8px; transition: transform 0.2s;"
+                    onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'"
+                    onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'">
+                    <span style="font-size: ${fontSize * 2}px;">🏠</span>
+                    <span>Accommodation</span>
+                  </button>
+                  <button 
+                    onclick="showPaymentModal('Exam Fees', 0);"
+                    style="background: white; color: ${config.primary_color || defaultConfig.primary_color}; padding: 20px; border: none; border-radius: 10px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: flex; flex-direction: column; align-items: center; gap: 8px; transition: transform 0.2s;"
+                    onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'"
+                    onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'">
+                    <span style="font-size: ${fontSize * 2}px;">📝</span>
+                    <span>Exam Fees</span>
+                  </button>
+                </div>
+              </div>
+            ` : `
+              <div style="background: linear-gradient(135deg, ${config.accent_color || defaultConfig.accent_color}, #059669); padding: 32px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-bottom: 32px; text-align: center;">
+                <div style="font-size: ${fontSize * 4}px; margin-bottom: 16px;">✅</div>
+                <h2 style="font-size: ${fontSize * 1.75}px; font-weight: 700; margin: 0 0 12px 0; color: white;">
+                  All Fees Paid!
+                </h2>
+                <p style="font-size: ${fontSize}px; color: rgba(255,255,255,0.95); margin: 0;">
+                  You have successfully completed all tuition fee payments. Great job!
+                </p>
+              </div>
+            `}
+
+            <!-- Payment History -->
+            ${(() => {
+              let paymentHistory = [];
+              try {
+                paymentHistory = JSON.parse(loggedInStudent.payment_history || '[]');
+              } catch (e) {
+                paymentHistory = [];
+              }
+              
+              if (paymentHistory.length > 0) {
+                return `
+                  <div style="background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 32px;">
+                    <h2 style="font-size: ${fontSize * 1.5}px; font-weight: 700; margin: 0 0 24px 0; color: ${config.text_color || defaultConfig.text_color};">
+                      Payment History
+                    </h2>
+                    <div style="overflow-x: auto;">
+                      <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                          <tr style="background: ${config.secondary_color || defaultConfig.secondary_color}; border-bottom: 2px solid #e5e7eb;">
+                            <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Date</th>
+                            <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Amount</th>
+                            <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Method</th>
+                            <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">Balance After</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          ${paymentHistory.slice().reverse().map((payment, index) => `
+                            <tr style="border-bottom: 1px solid #e5e7eb;">
+                              <td style="padding: 12px; font-size: ${fontSize * 0.9}px;">${new Date(payment.date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                              <td style="padding: 12px; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.accent_color || defaultConfig.accent_color};">$${payment.amount.toLocaleString()}</td>
+                              <td style="padding: 12px; font-size: ${fontSize * 0.9}px;">
+                                <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; background: ${config.primary_color || defaultConfig.primary_color}20; color: ${config.primary_color || defaultConfig.primary_color}; font-size: ${fontSize * 0.8}px; font-weight: 600;">
+                                  ${payment.method}
+                                </span>
+                              </td>
+                              <td style="padding: 12px; font-size: ${fontSize * 0.9}px; font-weight: 600;">$${payment.balance_after.toLocaleString()}</td>
+                            </tr>
+                          `).join('')}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                `;
+              }
+              return '';
+            })()}
+
+            <!-- Personal Information -->
+            <div style="background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+              <h2 style="font-size: ${fontSize * 1.5}px; font-weight: 700; margin: 0 0 24px 0; color: ${config.text_color || defaultConfig.text_color};">
+                👤 Personal Information
+              </h2>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 24px;">
+                <div>
+                  <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 8px;">Full Name</div>
+                  <div style="font-size: ${fontSize}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">${loggedInStudent.full_name}</div>
+                </div>
+                
+                <div>
+                  <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 8px;">Student ID</div>
+                  <div style="font-size: ${fontSize}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">${loggedInStudent.student_id}</div>
+                </div>
+                
+                <div>
+                  <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 8px;">Email Address</div>
+                  <div style="font-size: ${fontSize}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">${loggedInStudent.email}</div>
+                </div>
+                
+                <div>
+                  <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 8px;">Phone Number</div>
+                  <div style="font-size: ${fontSize}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">${loggedInStudent.phone}</div>
+                </div>
+                
+                <div>
+                  <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 8px;">Enrollment Date</div>
+                  <div style="font-size: ${fontSize}px; font-weight: 600; color: ${config.text_color || defaultConfig.text_color};">
+                    ${new Date(loggedInStudent.enrollment_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAdminDashboard() {
+      const totalStudents = currentStudents.length;
+      const totalFees = currentStudents.reduce((sum, s) => sum + s.total_fees, 0);
+      const totalPaid = currentStudents.reduce((sum, s) => sum + s.fees_paid, 0);
+      const totalOutstanding = totalFees - totalPaid;
+      const paidStudents = currentStudents.filter(s => s.payment_status === 'Paid').length;
+      const partialStudents = currentStudents.filter(s => s.payment_status === 'Partial').length;
+      const pendingStudents = currentStudents.filter(s => s.payment_status === 'Pending').length;
+
+      const courseDistribution = {};
+      const yearDistribution = {};
+      
+      currentStudents.forEach(student => {
+        courseDistribution[student.course] = (courseDistribution[student.course] || 0) + 1;
+        yearDistribution[student.year_of_study] = (yearDistribution[student.year_of_study] || 0) + 1;
+      });
+
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      return `
+        <div style="background: ${config.secondary_color || defaultConfig.secondary_color}; color: ${config.text_color || defaultConfig.text_color}; font-family: ${customFont}, ${baseFontStack};">
+          <div style="background: ${config.header_bg || defaultConfig.header_bg}; padding: 24px 32px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h1 style="font-size: ${fontSize * 2}px; font-weight: 700; color: white; margin: 0;">
+                Admin Dashboard
+              </h1>
+              <p style="font-size: ${fontSize * 0.9}px; color: rgba(255,255,255,0.9); margin-top: 4px;">
+                ${config.institution_name || defaultConfig.institution_name}
+              </p>
+            </div>
+            <button 
+              onclick="logout();"
+              style="background: rgba(255,255,255,0.2); color: white; padding: 10px 24px; border: 2px solid white; border-radius: 8px; font-size: ${fontSize * 0.9}px; font-weight: 600; cursor: pointer;"
+              onmouseover="this.style.background='rgba(255,255,255,0.3)'"
+              onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+              Logout
+            </button>
+          </div>
+
+          <div style="padding: 32px; max-width: 1400px; margin: 0 auto;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 24px; margin-bottom: 32px;">
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid ${config.primary_color || defaultConfig.primary_color};">
+                <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Total Students</div>
+                <div style="font-size: ${fontSize * 2.25}px; font-weight: 700; color: ${config.primary_color || defaultConfig.primary_color};">${totalStudents}</div>
+              </div>
+              
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid ${config.accent_color || defaultConfig.accent_color};">
+                <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Total Fees Collected</div>
+                <div style="font-size: ${fontSize * 2.25}px; font-weight: 700; color: ${config.accent_color || defaultConfig.accent_color};">$${totalPaid.toLocaleString()}</div>
+              </div>
+              
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid #f59e0b;">
+                <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Outstanding Fees</div>
+                <div style="font-size: ${fontSize * 2.25}px; font-weight: 700; color: #f59e0b;">$${totalOutstanding.toLocaleString()}</div>
+              </div>
+              
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid #8b5cf6;">
+                <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Collection Rate</div>
+                <div style="font-size: ${fontSize * 2.25}px; font-weight: 700; color: #8b5cf6;">${totalFees > 0 ? Math.round((totalPaid / totalFees) * 100) : 0}%</div>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-bottom: 32px;">
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Payment Status</h3>
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 12px; height: 12px; border-radius: 50%; background: #10b981;"></div>
+                      <span style="font-size: ${fontSize}px;">Fully Paid</span>
+                    </div>
+                    <span style="font-size: ${fontSize * 1.125}px; font-weight: 600;">${paidStudents}</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 12px; height: 12px; border-radius: 50%; background: #f59e0b;"></div>
+                      <span style="font-size: ${fontSize}px;">Partial Payment</span>
+                    </div>
+                    <span style="font-size: ${fontSize * 1.125}px; font-weight: 600;">${partialStudents}</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 12px; height: 12px; border-radius: 50%; background: #ef4444;"></div>
+                      <span style="font-size: ${fontSize}px;">Pending</span>
+                    </div>
+                    <span style="font-size: ${fontSize * 1.125}px; font-weight: 600;">${pendingStudents}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Students by Course</h3>
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                  ${Object.entries(courseDistribution).map(([course, count]) => `
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span style="font-size: ${fontSize}px;">${course}</span>
+                      <span style="font-size: ${fontSize * 1.125}px; font-weight: 600; color: ${config.primary_color || defaultConfig.primary_color};">${count}</span>
+                    </div>
+                  `).join('') || `<p style="font-size: ${fontSize * 0.9}px; color: #6b7280;">No students enrolled yet</p>`}
+                </div>
+              </div>
+
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Students by Year</h3>
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                  ${Object.entries(yearDistribution).map(([year, count]) => `
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span style="font-size: ${fontSize}px;">${year}</span>
+                      <span style="font-size: ${fontSize * 1.125}px; font-weight: 600; color: ${config.primary_color || defaultConfig.primary_color};">${count}</span>
+                    </div>
+                  `).join('') || `<p style="font-size: ${fontSize * 0.9}px; color: #6b7280;">No students enrolled yet</p>`}
+                </div>
+              </div>
+            </div>
+
+            ${currentStudents.length === 0 ? `
+              <div style="background: white; padding: 48px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
+                <div style="font-size: ${fontSize * 3}px; margin-bottom: 16px;">📚</div>
+                <h3 style="font-size: ${fontSize * 1.5}px; font-weight: 600; margin: 0 0 12px 0; color: ${config.text_color || defaultConfig.text_color};">No Students Yet</h3>
+                <p style="font-size: ${fontSize}px; color: #6b7280; margin: 0 0 24px 0;">Get started by adding your first student record</p>
+                <button 
+                  onclick="currentView = 'add'; renderApp();"
+                  style="background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 12px 32px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Add First Student
+                </button>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStudentsList() {
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      return `
+        <div style="background: ${config.secondary_color || defaultConfig.secondary_color}; color: ${config.text_color || defaultConfig.text_color}; font-family: ${customFont}, ${baseFontStack};">
+          <div style="background: ${config.header_bg || defaultConfig.header_bg}; padding: 32px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h1 style="font-size: ${fontSize * 2}px; font-weight: 700; color: white; margin: 0;">All Students</h1>
+            <p style="font-size: ${fontSize * 0.9}px; color: rgba(255,255,255,0.9); margin-top: 8px;">Manage student records and information</p>
+          </div>
+
+          <div style="padding: 32px; max-width: 1400px; margin: 0 auto;">
+            ${currentStudents.length === 0 ? `
+              <div style="background: white; padding: 48px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
+                <div style="font-size: ${fontSize * 3}px; margin-bottom: 16px;">📚</div>
+                <h3 style="font-size: ${fontSize * 1.5}px; font-weight: 600; margin: 0 0 12px 0;">No Students Yet</h3>
+                <p style="font-size: ${fontSize}px; color: #6b7280; margin: 0 0 24px 0;">Add your first student to get started</p>
+                <button 
+                  onclick="currentView = 'add'; renderApp();"
+                  style="background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 12px 32px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Add First Student
+                </button>
+              </div>
+            ` : `
+              <div style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden;">
+                <table style="width: 100%; border-collapse: collapse;">
+                  <thead>
+                    <tr style="background: ${config.primary_color || defaultConfig.primary_color}; color: white;">
+                      <th style="padding: 16px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">ID</th>
+                      <th style="padding: 16px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Name</th>
+                      <th style="padding: 16px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Course</th>
+                      <th style="padding: 16px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Year</th>
+                      <th style="padding: 16px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Status</th>
+                      <th style="padding: 16px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Outstanding</th>
+                      <th style="padding: 16px; text-align: center; font-size: ${fontSize * 0.9}px; font-weight: 600;">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${currentStudents.map((student, index) => `
+                      <tr style="border-bottom: 1px solid #e5e7eb; ${index % 2 === 0 ? 'background: #f9fafb;' : ''}">
+                        <td style="padding: 16px; font-size: ${fontSize * 0.9}px;">${student.student_id}</td>
+                        <td style="padding: 16px; font-size: ${fontSize * 0.9}px; font-weight: 500;">${student.full_name}</td>
+                        <td style="padding: 16px; font-size: ${fontSize * 0.9}px;">${student.course}</td>
+                        <td style="padding: 16px; font-size: ${fontSize * 0.9}px;">${student.year_of_study}</td>
+                        <td style="padding: 16px;">
+                          <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: ${fontSize * 0.8}px; font-weight: 600; background: ${getPaymentStatusColor(student.payment_status)}20; color: ${getPaymentStatusColor(student.payment_status)};">
+                            ${student.payment_status}
+                          </span>
+                        </td>
+                        <td style="padding: 16px; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${calculateOutstanding(student) > 0 ? '#ef4444' : '#10b981'};">
+                          $${calculateOutstanding(student).toLocaleString()}
+                        </td>
+                        <td style="padding: 16px; text-align: center;">
+                          <button 
+                            onclick="selectedStudent = currentStudents.find(s => s.__backendId === '${student.__backendId}'); currentView = 'detail'; renderApp();"
+                            style="background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 8px 16px; border: none; border-radius: 6px; font-size: ${fontSize * 0.85}px; cursor: pointer; margin-right: 8px;"
+                            onmouseover="this.style.opacity='0.9'"
+                            onmouseout="this.style.opacity='1'">
+                            View
+                          </button>
+                          <button 
+                            onclick="editingStudent = currentStudents.find(s => s.__backendId === '${student.__backendId}'); currentView = 'edit'; renderApp();"
+                            style="background: #6b7280; color: white; padding: 8px 16px; border: none; border-radius: 6px; font-size: ${fontSize * 0.85}px; cursor: pointer;"
+                            onmouseover="this.style.opacity='0.9'"
+                            onmouseout="this.style.opacity='1'">
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAddStudent() {
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      return `
+        <div style="background: ${config.secondary_color || defaultConfig.secondary_color}; color: ${config.text_color || defaultConfig.text_color}; font-family: ${customFont}, ${baseFontStack};">
+          <div style="background: ${config.header_bg || defaultConfig.header_bg}; padding: 32px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h1 style="font-size: ${fontSize * 2}px; font-weight: 700; color: white; margin: 0;">Add New Student</h1>
+            <p style="font-size: ${fontSize * 0.9}px; color: rgba(255,255,255,0.9); margin-top: 8px;">Enter student information</p>
+          </div>
+
+          <div style="padding: 32px; max-width: 800px; margin: 0 auto;">
+            <form id="add-student-form" style="background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 24px;">
+                <div>
+                  <label for="student_id" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Student ID</label>
+                  <input 
+                    type="text" 
+                    id="student_id" 
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+                
+                <div>
+                  <label for="full_name" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Full Name</label>
+                  <input 
+                    type="text" 
+                    id="full_name" 
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+                
+                <div>
+                  <label for="email" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Email</label>
+                  <input 
+                    type="email" 
+                    id="email" 
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+                
+                <div>
+                  <label for="phone" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Phone</label>
+                  <input 
+                    type="tel" 
+                    id="phone" 
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+                
+                <div>
+                  <label for="course" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Course</label>
+                  <select 
+                    id="course" 
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit; background: white;"
+                  >
+                    <option value="">Select Course</option>
+                    <option value="Computer Science">Computer Science</option>
+                    <option value="Business Administration">Business Administration</option>
+                    <option value="Engineering">Engineering</option>
+                    <option value="Medicine">Medicine</option>
+                    <option value="Law">Law</option>
+                    <option value="Arts">Arts</option>
+                    <option value="Education">Education</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label for="year_of_study" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Year of Study</label>
+                  <select 
+                    id="year_of_study" 
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit; background: white;"
+                  >
+                    <option value="">Select Year</option>
+                    <option value="Year 1">Year 1</option>
+                    <option value="Year 2">Year 2</option>
+                    <option value="Year 3">Year 3</option>
+                    <option value="Year 4">Year 4</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label for="total_fees" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Total Fees ($)</label>
+                  <input 
+                    type="number" 
+                    id="total_fees" 
+                    required
+                    min="0"
+                    step="0.01"
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+              </div>
+
+              <div style="margin-top: 32px; display: flex; gap: 16px;">
+                <button 
+                  type="submit"
+                  id="add-student-btn"
+                  style="flex: 1; background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Add Student
+                </button>
+                <button 
+                  type="button"
+                  onclick="currentView = 'admin-dashboard'; renderApp();"
+                  style="flex: 1; background: #6b7280; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderEditStudent() {
+      if (!editingStudent) return renderStudentsList();
+
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      return `
+        <div style="background: ${config.secondary_color || defaultConfig.secondary_color}; color: ${config.text_color || defaultConfig.text_color}; font-family: ${customFont}, ${baseFontStack};">
+          <div style="background: ${config.header_bg || defaultConfig.header_bg}; padding: 32px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h1 style="font-size: ${fontSize * 2}px; font-weight: 700; color: white; margin: 0;">Edit Student</h1>
+            <p style="font-size: ${fontSize * 0.9}px; color: rgba(255,255,255,0.9); margin-top: 8px;">Update student information</p>
+          </div>
+
+          <div style="padding: 32px; max-width: 800px; margin: 0 auto;">
+            <form id="edit-student-form" style="background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 24px;">
+                <div>
+                  <label for="edit_student_id" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Student ID</label>
+                  <input 
+                    type="text" 
+                    id="edit_student_id" 
+                    value="${editingStudent.student_id}"
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+                
+                <div>
+                  <label for="edit_full_name" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Full Name</label>
+                  <input 
+                    type="text" 
+                    id="edit_full_name" 
+                    value="${editingStudent.full_name}"
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+                
+                <div>
+                  <label for="edit_email" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Email</label>
+                  <input 
+                    type="email" 
+                    id="edit_email" 
+                    value="${editingStudent.email}"
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+                
+                <div>
+                  <label for="edit_phone" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Phone</label>
+                  <input 
+                    type="tel" 
+                    id="edit_phone" 
+                    value="${editingStudent.phone}"
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+                
+                <div>
+                  <label for="edit_course" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Course</label>
+                  <select 
+                    id="edit_course" 
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit; background: white;"
+                  >
+                    <option value="Computer Science" ${editingStudent.course === 'Computer Science' ? 'selected' : ''}>Computer Science</option>
+                    <option value="Business Administration" ${editingStudent.course === 'Business Administration' ? 'selected' : ''}>Business Administration</option>
+                    <option value="Engineering" ${editingStudent.course === 'Engineering' ? 'selected' : ''}>Engineering</option>
+                    <option value="Medicine" ${editingStudent.course === 'Medicine' ? 'selected' : ''}>Medicine</option>
+                    <option value="Law" ${editingStudent.course === 'Law' ? 'selected' : ''}>Law</option>
+                    <option value="Arts" ${editingStudent.course === 'Arts' ? 'selected' : ''}>Arts</option>
+                    <option value="Education" ${editingStudent.course === 'Education' ? 'selected' : ''}>Education</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label for="edit_year_of_study" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Year of Study</label>
+                  <select 
+                    id="edit_year_of_study" 
+                    required
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit; background: white;"
+                  >
+                    <option value="Year 1" ${editingStudent.year_of_study === 'Year 1' ? 'selected' : ''}>Year 1</option>
+                    <option value="Year 2" ${editingStudent.year_of_study === 'Year 2' ? 'selected' : ''}>Year 2</option>
+                    <option value="Year 3" ${editingStudent.year_of_study === 'Year 3' ? 'selected' : ''}>Year 3</option>
+                    <option value="Year 4" ${editingStudent.year_of_study === 'Year 4' ? 'selected' : ''}>Year 4</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label for="edit_total_fees" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Total Fees ($)</label>
+                  <input 
+                    type="number" 
+                    id="edit_total_fees" 
+                    value="${editingStudent.total_fees}"
+                    required
+                    min="0"
+                    step="0.01"
+                    style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                  />
+                </div>
+              </div>
+
+              <div style="margin-top: 32px; display: flex; gap: 16px;">
+                <button 
+                  type="submit"
+                  id="update-student-btn"
+                  style="flex: 1; background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Update Student
+                </button>
+                <button 
+                  type="button"
+                  onclick="editingStudent = null; currentView = 'students'; renderApp();"
+                  style="flex: 1; background: #6b7280; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStudentDetail() {
+      if (!selectedStudent) return renderStudentsList();
+
+      const config = window.elementSdk.config;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+      const fontSize = config.font_size || defaultConfig.font_size;
+      const outstanding = calculateOutstanding(selectedStudent);
+
+      let examRecords = [];
+      try {
+        examRecords = JSON.parse(selectedStudent.exam_records || '[]');
+      } catch (e) {
+        examRecords = [];
+      }
+
+      return `
+        <div style="background: ${config.secondary_color || defaultConfig.secondary_color}; color: ${config.text_color || defaultConfig.text_color}; font-family: ${customFont}, ${baseFontStack};">
+          <div style="background: ${config.header_bg || defaultConfig.header_bg}; padding: 32px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h1 style="font-size: ${fontSize * 2}px; font-weight: 700; color: white; margin: 0;">${selectedStudent.full_name}</h1>
+            <p style="font-size: ${fontSize * 0.9}px; color: rgba(255,255,255,0.9); margin-top: 8px;">Student ID: ${selectedStudent.student_id}</p>
+          </div>
+
+          <div style="padding: 32px; max-width: 1000px; margin: 0 auto;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-bottom: 32px;">
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Personal Information</h3>
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Email</div>
+                    <div style="font-size: ${fontSize}px; font-weight: 500;">${selectedStudent.email}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Phone</div>
+                    <div style="font-size: ${fontSize}px; font-weight: 500;">${selectedStudent.phone}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Enrollment Date</div>
+                    <div style="font-size: ${fontSize}px; font-weight: 500;">${new Date(selectedStudent.enrollment_date).toLocaleDateString()}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Academic Information</h3>
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Course</div>
+                    <div style="font-size: ${fontSize}px; font-weight: 500;">${selectedStudent.course}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Year of Study</div>
+                    <div style="font-size: ${fontSize}px; font-weight: 500;">${selectedStudent.year_of_study}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Fee Information</h3>
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Total Fees</div>
+                    <div style="font-size: ${fontSize * 1.25}px; font-weight: 700; color: ${config.primary_color || defaultConfig.primary_color};">$${selectedStudent.total_fees.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Fees Paid</div>
+                    <div style="font-size: ${fontSize * 1.25}px; font-weight: 700; color: ${config.accent_color || defaultConfig.accent_color};">$${selectedStudent.fees_paid.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Outstanding</div>
+                    <div style="font-size: ${fontSize * 1.25}px; font-weight: 700; color: ${outstanding > 0 ? '#ef4444' : '#10b981'};">$${outstanding.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Payment Status</div>
+                    <span style="display: inline-block; padding: 6px 16px; border-radius: 12px; font-size: ${fontSize * 0.85}px; font-weight: 600; background: ${getPaymentStatusColor(selectedStudent.payment_status)}20; color: ${getPaymentStatusColor(selectedStudent.payment_status)};">
+                      ${selectedStudent.payment_status}
+                    </span>
+                  </div>
+                  ${selectedStudent.last_payment_date ? `
+                    <div>
+                      <div style="font-size: ${fontSize * 0.85}px; color: #6b7280; margin-bottom: 4px;">Last Payment</div>
+                      <div style="font-size: ${fontSize}px; font-weight: 500;">
+                        $${selectedStudent.last_payment_amount.toLocaleString()} on ${new Date(selectedStudent.last_payment_date).toLocaleDateString()}
+                        ${selectedStudent.last_payment_method ? `<br/><span style="font-size: ${fontSize * 0.85}px; color: #6b7280;">via ${selectedStudent.last_payment_method}</span>` : ''}
+                      </div>
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+            </div>
+
+            <!-- Add Exam Record Section -->
+            <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 24px;">
+              <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Add Exam Record</h3>
+              <form id="add-exam-form">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px;">
+                  <div>
+                    <label for="exam_subject" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Subject</label>
+                    <input 
+                      type="text" 
+                      id="exam_subject" 
+                      required
+                      placeholder="e.g., Mathematics"
+                      style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                    />
+                  </div>
+                  <div>
+                    <label for="exam_type" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Exam Type</label>
+                    <select 
+                      id="exam_type" 
+                      required
+                      style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit; background: white;"
+                    >
+                      <option value="">Select Type</option>
+                      <option value="Midterm">Midterm</option>
+                      <option value="Final">Final</option>
+                      <option value="Quiz">Quiz</option>
+                      <option value="Assignment">Assignment</option>
+                      <option value="Project">Project</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="exam_score" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Score (0-100)</label>
+                    <input 
+                      type="number" 
+                      id="exam_score" 
+                      required
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      placeholder="85"
+                      style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                    />
+                  </div>
+                  <div>
+                    <label for="exam_grade" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Grade</label>
+                    <select 
+                      id="exam_grade" 
+                      required
+                      style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit; background: white;"
+                    >
+                      <option value="">Select Grade</option>
+                      <option value="A+">A+</option>
+                      <option value="A">A</option>
+                      <option value="A-">A-</option>
+                      <option value="B+">B+</option>
+                      <option value="B">B</option>
+                      <option value="B-">B-</option>
+                      <option value="C+">C+</option>
+                      <option value="C">C</option>
+                      <option value="C-">C-</option>
+                      <option value="D+">D+</option>
+                      <option value="D">D</option>
+                      <option value="F">F</option>
+                    </select>
+                  </div>
+                </div>
+                <button 
+                  type="submit"
+                  id="add-exam-btn"
+                  style="width: 100%; background: ${config.accent_color || defaultConfig.accent_color}; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Add Exam Record
+                </button>
+              </form>
+            </div>
+
+            <!-- Exam Records Display -->
+            ${examRecords.length > 0 ? `
+              <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 24px;">
+                <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Exam Records</h3>
+                <div style="overflow-x: auto;">
+                  <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                      <tr style="background: ${config.secondary_color || defaultConfig.secondary_color}; border-bottom: 2px solid #e5e7eb;">
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Subject</th>
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Exam Type</th>
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Score</th>
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Grade</th>
+                        <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${examRecords.slice().reverse().map((record, index) => `
+                        <tr style="border-bottom: 1px solid #e5e7eb;">
+                          <td style="padding: 12px; font-size: ${fontSize * 0.9}px; font-weight: 500;">${record.subject}</td>
+                          <td style="padding: 12px; font-size: ${fontSize * 0.9}px;">${record.exam_type}</td>
+                          <td style="padding: 12px; font-size: ${fontSize * 0.9}px; font-weight: 600;">${record.score}/100</td>
+                          <td style="padding: 12px;">
+                            <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; background: ${record.grade.startsWith('A') ? '#10b98120' : record.grade.startsWith('B') ? '#3b82f620' : record.grade.startsWith('C') ? '#f59e0b20' : '#ef444420'}; color: ${record.grade.startsWith('A') ? '#10b981' : record.grade.startsWith('B') ? '#3b82f6' : record.grade.startsWith('C') ? '#f59e0b' : '#ef4444'}; font-size: ${fontSize * 0.85}px; font-weight: 600;">
+                              ${record.grade}
+                            </span>
+                          </td>
+                          <td style="padding: 12px; font-size: ${fontSize * 0.9}px; color: #6b7280;">${new Date(record.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ` : ''}
+
+            <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 24px;">
+              <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Record Payment</h3>
+              <form id="payment-form">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                  <div>
+                    <label for="payment_amount" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Payment Amount ($)</label>
+                    <input 
+                      type="number" 
+                      id="payment_amount" 
+                      required
+                      min="0.01"
+                      max="${outstanding}"
+                      step="0.01"
+                      placeholder="Enter amount"
+                      style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit;"
+                    />
+                  </div>
+                  <div>
+                    <label for="payment_method" style="display: block; font-size: ${fontSize * 0.9}px; font-weight: 600; margin-bottom: 8px; color: ${config.text_color || defaultConfig.text_color};">Payment Method</label>
+                    <select 
+                      id="payment_method" 
+                      required
+                      style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: ${fontSize}px; font-family: inherit; background: white;"
+                    >
+                      <option value="">Select Method</option>
+                      <option value="Cash">Cash</option>
+                      <option value="Credit Card">Credit Card</option>
+                      <option value="Debit Card">Debit Card</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Mobile Money">Mobile Money</option>
+                      <option value="Cheque">Cheque</option>
+                      <option value="Online Payment">Online Payment</option>
+                    </select>
+                  </div>
+                </div>
+                <button 
+                  type="submit"
+                  id="record-payment-btn"
+                  style="width: 100%; background: ${config.accent_color || defaultConfig.accent_color}; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                  onmouseover="this.style.opacity='0.9'"
+                  onmouseout="this.style.opacity='1'">
+                  Record Payment
+                </button>
+              </form>
+            </div>
+
+            ${(() => {
+              let paymentHistory = [];
+              try {
+                paymentHistory = JSON.parse(selectedStudent.payment_history || '[]');
+              } catch (e) {
+                paymentHistory = [];
+              }
+              
+              if (paymentHistory.length > 0) {
+                return `
+                  <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 24px;">
+                    <h3 style="font-size: ${fontSize * 1.25}px; font-weight: 600; margin: 0 0 20px 0; color: ${config.text_color || defaultConfig.text_color};">Payment History</h3>
+                    <div style="overflow-x: auto;">
+                      <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                          <tr style="background: ${config.secondary_color || defaultConfig.secondary_color}; border-bottom: 2px solid #e5e7eb;">
+                            <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Date</th>
+                            <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Amount</th>
+                            <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Method</th>
+                            <th style="padding: 12px; text-align: left; font-size: ${fontSize * 0.9}px; font-weight: 600;">Balance After</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          ${paymentHistory.slice().reverse().map((payment, index) => `
+                            <tr style="border-bottom: 1px solid #e5e7eb;">
+                              <td style="padding: 12px; font-size: ${fontSize * 0.9}px;">${new Date(payment.date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                              <td style="padding: 12px; font-size: ${fontSize * 0.9}px; font-weight: 600; color: ${config.accent_color || defaultConfig.accent_color};">$${payment.amount.toLocaleString()}</td>
+                              <td style="padding: 12px; font-size: ${fontSize * 0.9}px;">
+                                <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; background: ${config.primary_color || defaultConfig.primary_color}20; color: ${config.primary_color || defaultConfig.primary_color}; font-size: ${fontSize * 0.8}px; font-weight: 600;">
+                                  ${payment.method}
+                                </span>
+                              </td>
+                              <td style="padding: 12px; font-size: ${fontSize * 0.9}px; font-weight: 600;">$${payment.balance_after.toLocaleString()}</td>
+                            </tr>
+                          `).join('')}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                `;
+              }
+              return '';
+            })()}
+
+            <div style="display: flex; gap: 16px;">
+              <button 
+                onclick="editingStudent = selectedStudent; selectedStudent = null; currentView = 'edit'; renderApp();"
+                style="flex: 1; background: ${config.primary_color || defaultConfig.primary_color}; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                onmouseover="this.style.opacity='0.9'"
+                onmouseout="this.style.opacity='1'">
+                Edit Student
+              </button>
+              <button 
+                onclick="selectedStudent = null; currentView = 'students'; renderApp();"
+                style="flex: 1; background: #6b7280; color: white; padding: 14px; border: none; border-radius: 8px; font-size: ${fontSize}px; font-weight: 600; cursor: pointer;"
+                onmouseover="this.style.opacity='0.9'"
+                onmouseout="this.style.opacity='1'">
+                Back to List
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAdminNavigation() {
+      const config = window.elementSdk.config;
+      const fontSize = config.font_size || defaultConfig.font_size;
+
+      return `
+        <nav style="background: white; border-bottom: 2px solid #e5e7eb; padding: 0 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <div style="max-width: 1400px; margin: 0 auto; display: flex; gap: 8px;">
+            <button 
+              onclick="currentView = 'admin-dashboard'; renderApp();"
+              style="padding: 16px 24px; border: none; background: ${currentView === 'admin-dashboard' ? config.primary_color || defaultConfig.primary_color : 'transparent'}; color: ${currentView === 'admin-dashboard' ? 'white' : config.text_color || defaultConfig.text_color}; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; border-bottom: 3px solid ${currentView === 'admin-dashboard' ? config.primary_color || defaultConfig.primary_color : 'transparent'};"
+              onmouseover="if('${currentView}' !== 'admin-dashboard') this.style.background='#f3f4f6'"
+              onmouseout="if('${currentView}' !== 'admin-dashboard') this.style.background='transparent'">
+              📊 Dashboard
+            </button>
+            <button 
+              onclick="currentView = 'students'; renderApp();"
+              style="padding: 16px 24px; border: none; background: ${currentView === 'students' || currentView === 'detail' || currentView === 'edit' ? config.primary_color || defaultConfig.primary_color : 'transparent'}; color: ${currentView === 'students' || currentView === 'detail' || currentView === 'edit' ? 'white' : config.text_color || defaultConfig.text_color}; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; border-bottom: 3px solid ${currentView === 'students' || currentView === 'detail' || currentView === 'edit' ? config.primary_color || defaultConfig.primary_color : 'transparent'};"
+              onmouseover="if('${currentView}' !== 'students' && '${currentView}' !== 'detail' && '${currentView}' !== 'edit') this.style.background='#f3f4f6'"
+              onmouseout="if('${currentView}' !== 'students' && '${currentView}' !== 'detail' && '${currentView}' !== 'edit') this.style.background='transparent'">
+              👥 All Students
+            </button>
+            <button 
+              onclick="currentView = 'add'; renderApp();"
+              style="padding: 16px 24px; border: none; background: ${currentView === 'add' ? config.primary_color || defaultConfig.primary_color : 'transparent'}; color: ${currentView === 'add' ? 'white' : config.text_color || defaultConfig.text_color}; font-size: ${fontSize}px; font-weight: 600; cursor: pointer; border-bottom: 3px solid ${currentView === 'add' ? config.primary_color || defaultConfig.primary_color : 'transparent'};"
+              onmouseover="if('${currentView}' !== 'add') this.style.background='#f3f4f6'"
+              onmouseout="if('${currentView}' !== 'add') this.style.background='transparent'">
+              ➕ Add Student
+            </button>
+          </div>
+        </nav>
+      `;
+    }
+
+    function renderApp() {
+      const app = document.getElementById('app');
+      
+      // Update logged-in student data if they exist
+      if (loggedInStudent) {
+        const updatedStudent = currentStudents.find(s => s.__backendId === loggedInStudent.__backendId);
+        if (updatedStudent) {
+          loggedInStudent = updatedStudent;
+        }
+      }
+
+      // Update selected student data if they exist
+      if (selectedStudent) {
+        const updatedStudent = currentStudents.find(s => s.__backendId === selectedStudent.__backendId);
+        if (updatedStudent) {
+          selectedStudent = updatedStudent;
+        }
+      }
+
+      let content = '';
+      
+      if (currentView === 'login-choice') {
+        content = renderLoginChoice();
+      } else if (currentView === 'student-login') {
+        content = renderStudentLogin();
+      } else if (currentView === 'student-dashboard') {
+        content = renderStudentDashboard();
+      } else if (isAdminMode) {
+        const navigation = renderAdminNavigation();
+        if (currentView === 'admin-dashboard') {
+          content = navigation + renderAdminDashboard();
+        } else if (currentView === 'students') {
+          content = navigation + renderStudentsList();
+        } else if (currentView === 'add') {
+          content = navigation + renderAddStudent();
+        } else if (currentView === 'edit') {
+          content = navigation + renderEditStudent();
+        } else if (currentView === 'detail') {
+          content = navigation + renderStudentDetail();
+        }
+      }
+
+      app.innerHTML = content;
+
+      // Student login form
+      const loginForm = document.getElementById('student-login-form');
+      if (loginForm) {
+        loginForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          const fullName = document.getElementById('login_student_name').value;
+          const admissionNumber = document.getElementById('login_admission_number').value;
+          studentLogin(fullName, admissionNumber);
+        });
+      }
+
+      // Forgot password button
+      const forgotPasswordBtn = document.getElementById('forgot-password-btn');
+      if (forgotPasswordBtn) {
+        forgotPasswordBtn.addEventListener('click', () => {
+          showForgotPasswordMessage();
+        });
+      }
+
+      // Add student form
+      const addForm = document.getElementById('add-student-form');
+      if (addForm) {
+        addForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          addStudent({
+            student_id: document.getElementById('student_id').value,
+            full_name: document.getElementById('full_name').value,
+            email: document.getElementById('email').value,
+            phone: document.getElementById('phone').value,
+            course: document.getElementById('course').value,
+            year_of_study: document.getElementById('year_of_study').value,
+            total_fees: parseFloat(document.getElementById('total_fees').value)
+          });
+        });
+      }
+
+      // Edit student form
+      const editForm = document.getElementById('edit-student-form');
+      if (editForm && editingStudent) {
+        editForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          updateStudent(editingStudent, {
+            student_id: document.getElementById('edit_student_id').value,
+            full_name: document.getElementById('edit_full_name').value,
+            email: document.getElementById('edit_email').value,
+            phone: document.getElementById('edit_phone').value,
+            course: document.getElementById('edit_course').value,
+            year_of_study: document.getElementById('edit_year_of_study').value,
+            total_fees: parseFloat(document.getElementById('edit_total_fees').value)
+          });
+        });
+      }
+
+      // Payment form
+      const paymentForm = document.getElementById('payment-form');
+      if (paymentForm && selectedStudent) {
+        paymentForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          const amount = parseFloat(document.getElementById('payment_amount').value);
+          const method = document.getElementById('payment_method').value;
+          recordPayment(selectedStudent, amount, method);
+        });
+      }
+
+      // Add exam form
+      const examForm = document.getElementById('add-exam-form');
+      if (examForm && selectedStudent) {
+        examForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          addExamRecord(selectedStudent, {
+            subject: document.getElementById('exam_subject').value,
+            exam_type: document.getElementById('exam_type').value,
+            score: parseFloat(document.getElementById('exam_score').value),
+            grade: document.getElementById('exam_grade').value
+          });
+        });
+      }
+    }
+
+    async function onConfigChange(config) {
+      renderApp();
+    }
+
+    async function init() {
+      if (window.dataSdk) {
+        const initResult = await window.dataSdk.init(dataHandler);
+        if (!initResult.isOk) {
+          console.error('Failed to initialize Data SDK');
+        }
+      }
+
+      if (window.elementSdk) {
+        await window.elementSdk.init({
+          defaultConfig,
+          onConfigChange,
+          mapToCapabilities: (config) => ({
+            recolorables: [
+              { get: () => config.primary_color || defaultConfig.primary_color, set: (v) => { config.primary_color = v; window.elementSdk.setConfig({ primary_color: v }); } },
+              { get: () => config.secondary_color || defaultConfig.secondary_color, set: (v) => { config.secondary_color = v; window.elementSdk.setConfig({ secondary_color: v }); } },
+              { get: () => config.text_color || defaultConfig.text_color, set: (v) => { config.text_color = v; window.elementSdk.setConfig({ text_color: v }); } },
+              { get: () => config.header_bg || defaultConfig.header_bg, set: (v) => { config.header_bg = v; window.elementSdk.setConfig({ header_bg: v }); } },
+              { get: () => config.accent_color || defaultConfig.accent_color, set: (v) => { config.accent_color = v; window.elementSdk.setConfig({ accent_color: v }); } }
+            ],
+            borderables: [],
+            fontEditable: { get: () => config.font_family || defaultConfig.font_family, set: (v) => { config.font_family = v; window.elementSdk.setConfig({ font_family: v }); } },
+            fontSizeable: { get: () => config.font_size || defaultConfig.font_size, set: (v) => { config.font_size = v; window.elementSdk.setConfig({ font_size: v }); } }
+          }),
+          mapToEditPanelValues: (config) => new Map([
+            ["portal_title", config.portal_title || defaultConfig.portal_title],
+            ["institution_name", config.institution_name || defaultConfig.institution_name],
+            ["welcome_message", config.welcome_message || defaultConfig.welcome_message]
+          ])
+        });
+      }
+
+      renderApp();
+    }
+
+    init();
+  </script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9bf09f5ff1c48a46',t:'MTc2ODU5ODA2Ny4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
